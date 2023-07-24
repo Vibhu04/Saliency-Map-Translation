@@ -1,0 +1,13 @@
+batch_size: 1
+num_epochs: 10
+img_dir: 'VG'
+annot_file: 'region_descriptions.json'
+test_dir: 'data/test'
+write_logs: True
+d_model: 800
+nhead: 8
+num_encoder_layers: 6
+lr: 0.0001
+weight_decay: 0.00001
+checkpoint_save_name: 'models/model.pth'
+logs_dir: "logs"
