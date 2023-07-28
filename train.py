@@ -7,12 +7,11 @@ import torch.optim as optim
 import yaml
 import argparse
 from torch.utils.data import DataLoader
-from transformers import AutoProcessor, BlipModel
+from transformers import BlipProcessor, BlipForImageTextRetrieval
 from torch.utils.tensorboard import SummaryWriter
 
-
-from vg_dataloader import VG_Dataset
-from ViT import RegionEncoder
+from lib.vg_dataloader import VG_Dataset
+from lib.region_encoder import RegionEncoder
 
 
 def main():
@@ -28,8 +27,16 @@ def main():
     img_dir = args.img_dir
     annot_file = args.annot_file
 
-    blip = BlipModel.from_pretrained("Salesforce/blip-image-captioning-base")
-    processor = AutoProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+    processor = BlipProcessor.from_pretrained("Salesforce/blip-itm-base-coco")
+    blip = BlipForImageTextRetrieval.from_pretrained("Salesforce/blip-itm-base-coco", torch_dtype=torch.bfloat16)
+
+    count = 0
+    for name, param in blip.named_parameters():
+        if count == 0:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
+        count += 1
 
     dataset = VG_Dataset(img_dir, annot_file)
 
@@ -75,22 +82,25 @@ def train(encoder_model, dataloader, blip, processor, optimizer, num_epochs, wri
             encodings = encoder_model(images, regions, device)
             encodings = encodings.reshape(-1, 64, 64, 3)
 
-            inputs = processor(text=captions, images=encodings, return_tensors="pt", padding=True)
+            print(captions)
+            print(encodings.shape)
+            inputs = processor(encodings, captions, return_tensors="pt", padding=True).to(torch.bfloat16)
 
-            with torch.no_grad():
-                outputs = blip(**inputs)
+            cosine_score = blip(**inputs, use_itm_head=False)[0]
 
-            logits_per_image = outputs.logits_per_image  # this is the image-text similarity score
-            probs = logits_per_image.softmax(dim=1)
-            probs = 1 - probs
+            print(cosine_score)
 
-            probs.backward()
+            cosine_score *= -1
+
+            cosine_score.backward()
+            print("Going to step")
             optimizer.step()
+            print("Stepped")
 
-            running_loss += probs.item() * inputs.size(0)
+            running_loss += cosine_score.item() * images.size(0)
 
-            if writer is None:
-                writer.add_scalar("train_loss", float(probs.detach().data), batch_idx + 1 + args.batch_size * epoch)
+            # if writer is None:
+            #     writer.add_scalar("train_loss", float(cosine_score.detach().data), batch_idx + 1 + args.batch_size * epoch)
 
 
         # Compute average loss for the epoch
